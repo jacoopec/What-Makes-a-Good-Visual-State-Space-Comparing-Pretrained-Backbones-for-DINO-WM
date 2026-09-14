@@ -1,0 +1,11 @@
+# _target_: models.clip_encoder.CLIPVisionEncoder
+# name: "ViT-B/16"
+# true  -> patch dimension 512
+# false -> patch dimension 768
+# return_projected_tokens: true
+
+_target_: models.encoder.clip_encoder.CLIPVisionEncoder
+
+name: "ViT-B/16"
+return_projected_tokens: true
+download_root: "/homes/jpecchini/.cache/clip"

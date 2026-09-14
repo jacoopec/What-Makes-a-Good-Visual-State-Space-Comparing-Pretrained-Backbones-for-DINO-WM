@@ -1,0 +1,6 @@
+
+_target_: models.encoder.siglip.SigLIPEncoder
+
+# model_name: /homes/jpecchini/models/siglip-base-patch16-224
+cache_dir: null
+local_files_only: true

@@ -244,8 +244,7 @@ class Trainer:
         if self.encoder.latent_ndim == 1:  # if feature is 1D
             num_patches = 1
         else:
-            decoder_scale = 16  # from vqvae
-            num_side_patches = self.cfg.img_size // decoder_scale
+            num_side_patches = self.cfg.img_size // self.encoder.patch_size
             num_patches = num_side_patches**2
 
         if self.cfg.concat_dim == 0:
@@ -441,7 +440,11 @@ class Trainer:
 
     def train(self):
         for i, data in enumerate(
-            tqdm(self.dataloaders["train"], desc=f"Epoch {self.epoch} Train")
+            tqdm(
+                self.dataloaders["train"],
+                desc=f"Epoch {self.epoch} Train",
+                disable=not self.accelerator.is_main_process,
+            )
         ):
             obs, act, state = data
             plot = i == 0  # only plot from the first batch
@@ -552,8 +555,13 @@ class Trainer:
                 self.logs_update(val_rollout_logs)
 
         self.accelerator.wait_for_everyone()
+
         for i, data in enumerate(
-            tqdm(self.dataloaders["valid"], desc=f"Epoch {self.epoch} Valid")
+            tqdm(
+                self.dataloaders["train"],
+                desc=f"Epoch {self.epoch} Train",
+                disable=not self.accelerator.is_main_process,
+            )
         ):
             obs, act, state = data
             plot = i == 0
