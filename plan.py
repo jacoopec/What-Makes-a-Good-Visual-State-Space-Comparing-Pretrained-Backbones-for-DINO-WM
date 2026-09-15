@@ -32,6 +32,19 @@ ALL_MODEL_KEYS = [
     "action_encoder",
 ]
 
+def make_env(env_name, env_args, env_kwargs):
+
+    if env_name == "pushcube":
+        from env.pushcube_env import PushCubeDinoEnv
+
+        return PushCubeDinoEnv(**env_kwargs)
+
+    return gym.make(
+        env_name,
+        *env_args,
+        **env_kwargs
+    )
+
 def planning_main_in_dir(working_dir, cfg_dict):
     os.chdir(working_dir)
     return planning_main(cfg_dict=cfg_dict)
@@ -472,8 +485,10 @@ def planning_main(cfg_dict):
     else:
         env = SubprocVectorEnv(
             [
-                lambda: gym.make(
-                    model_cfg.env.name, *model_cfg.env.args, **model_cfg.env.kwargs
+                lambda: make_env(
+                    model_cfg.env.name,
+                    model_cfg.env.args,
+                    env_kwargs
                 )
                 for _ in range(cfg_dict["n_evals"])
             ]
