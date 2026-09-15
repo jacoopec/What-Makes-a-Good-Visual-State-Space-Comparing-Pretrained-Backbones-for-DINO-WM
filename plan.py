@@ -472,23 +472,47 @@ def planning_main(cfg_dict):
     model = load_model(model_ckpt, model_cfg, num_action_repeat, device=device)
 
     # use dummy vector env for wall and deformable envs
-    if model_cfg.env.name == "wall" or model_cfg.env.name == "deformable_env":
+    if model_cfg.env.name == "pushcube":
+
         from env.serial_vector_env import SerialVectorEnv
+        from env.pushcube.pushcube_wrapper import PushCubeWrapper
+
         env = SerialVectorEnv(
             [
-                gym.make(
-                    model_cfg.env.name, *model_cfg.env.args, **model_cfg.env.kwargs
+                PushCubeWrapper(
+                    *model_cfg.env.args,
+                    **model_cfg.env.kwargs,
                 )
                 for _ in range(cfg_dict["n_evals"])
             ]
         )
+
+    elif (
+        model_cfg.env.name == "wall"
+        or model_cfg.env.name == "deformable_env"
+    ):
+
+        from env.serial_vector_env import SerialVectorEnv
+
+        env = SerialVectorEnv(
+            [
+                gym.make(
+                    model_cfg.env.name,
+                    *model_cfg.env.args,
+                    **model_cfg.env.kwargs,
+                )
+                for _ in range(cfg_dict["n_evals"])
+            ]
+        )
+
     else:
+
         env = SubprocVectorEnv(
             [
-                lambda: make_env(
+                lambda: gym.make(
                     model_cfg.env.name,
-                    model_cfg.env.args,
-                    env_kwargs
+                    *model_cfg.env.args,
+                    **model_cfg.env.kwargs,
                 )
                 for _ in range(cfg_dict["n_evals"])
             ]

@@ -46,10 +46,38 @@ class Preprocessor:
     def preprocess_obs_visual(self, obs_visual):
         return rearrange(obs_visual, "b t h w c -> b t c h w") / 255.0
 
+    # def transform_obs_visual(self, obs_visual):
+    #     transformed_obs_visual = torch.tensor(obs_visual)
+    #     transformed_obs_visual = self.preprocess_obs_visual(transformed_obs_visual)
+    #     transformed_obs_visual = self.transform(transformed_obs_visual)
+    #     return transformed_obs_visual
+    
     def transform_obs_visual(self, obs_visual):
-        transformed_obs_visual = torch.tensor(obs_visual)
-        transformed_obs_visual = self.preprocess_obs_visual(transformed_obs_visual)
-        transformed_obs_visual = self.transform(transformed_obs_visual)
+        transformed_obs_visual = torch.as_tensor(obs_visual)
+
+        # [B,T,H,W,C] -> [B,T,C,H,W]
+        transformed_obs_visual = self.preprocess_obs_visual(
+            transformed_obs_visual
+        )
+
+        B, T, C, H, W = transformed_obs_visual.shape
+
+        # torchvision transforms expect [N,C,H,W]
+        transformed_obs_visual = transformed_obs_visual.reshape(
+            B * T, C, H, W
+        )
+
+        transformed_obs_visual = self.transform(
+            transformed_obs_visual
+        )
+
+        # After resize, e.g. [B*T,3,224,224]
+        C2, H2, W2 = transformed_obs_visual.shape[-3:]
+
+        transformed_obs_visual = transformed_obs_visual.reshape(
+            B, T, C2, H2, W2
+        )
+
         return transformed_obs_visual
     
     def transform_obs(self, obs):

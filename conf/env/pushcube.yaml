@@ -5,9 +5,9 @@ args: []
 kwargs: {}
 
 dataset:
-  _target_: "datasets.pushcube_dset.load_pushcube_slice_train_val"
+  _target_: datasets.pushcube_dset.load_pushcube_slice_train_val
 
-  data_path: "/work/cvcs2026/DINO_WM/data/pushcube/trajectory.rgb.pd_ee_delta_pos.physx_cpu.h5"
+  data_path: /work/cvcs2026/DINO_WM/data/pushcube/trajectory.rgb.pd_ee_delta_pos.physx_cpu.h5
 
   n_rollout: null
   normalize_action: true
@@ -15,7 +15,7 @@ dataset:
   filter_success: true
 
   transform:
-    _target_: "datasets.img_transforms.default_transform"
+    _target_: datasets.img_transforms.default_transform
     img_size: ${img_size}
 
 decoder_path: null
