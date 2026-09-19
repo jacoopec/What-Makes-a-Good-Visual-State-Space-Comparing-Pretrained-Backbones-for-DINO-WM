@@ -122,13 +122,18 @@ class Trainer:
         self.train_traj_dset = traj_dsets["train"]
         self.val_traj_dset = traj_dsets["valid"]
 
+        
         self.dataloaders = {
             x: torch.utils.data.DataLoader(
                 self.datasets[x],
                 batch_size=self.cfg.gpu_batch_size,
-                shuffle=False, # already shuffled in TrajSlicerDataset
+                shuffle=False,
                 num_workers=self.cfg.env.num_workers,
                 collate_fn=None,
+
+                pin_memory=True,
+                persistent_workers=self.cfg.env.num_workers > 0,
+                prefetch_factor=2,
             )
             for x in ["train", "valid"]
         }
@@ -374,8 +379,10 @@ class Trainer:
             self.accelerator.wait_for_everyone()
             self.train()
             self.accelerator.wait_for_everyone()
-            self.val()
-            self.logs_flash(step=self.epoch)
+            
+            ckpt_path = None
+            model_name = None
+            model_epoch = None
             if self.epoch % self.cfg.training.save_every_x_epoch == 0:
                 ckpt_path, model_name, model_epoch = self.save_ckpt()
                 # main thread only: launch planning jobs on the saved ckpt
@@ -406,6 +413,10 @@ class Trainer:
                     )
                     with lock:
                         self.job_set.update(jobs)
+            
+            self.val()
+            self.logs_flash(step=self.epoch)
+            
 
     def err_eval_single(self, z_pred, z_tgt):
         logs = {}
