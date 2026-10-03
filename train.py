@@ -479,6 +479,9 @@ class Trainer:
                 self.action_encoder_optimizer.step()
 
             loss = self.accelerator.gather_for_metrics(loss).mean()
+            self.logs_update({
+                "train_total_loss": [loss.item()]
+            })
 
             loss_components = self.accelerator.gather_for_metrics(loss_components)
             loss_components = {
@@ -574,6 +577,10 @@ class Trainer:
             )
 
             loss = self.accelerator.gather_for_metrics(loss).mean()
+            
+            self.logs_update({
+                "train_total_loss": [loss.item()]
+            })
 
             loss_components = self.accelerator.gather_for_metrics(loss_components)
             loss_components = {
