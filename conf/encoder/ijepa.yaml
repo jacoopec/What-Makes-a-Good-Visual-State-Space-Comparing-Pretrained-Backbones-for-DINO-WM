@@ -1,0 +1,3 @@
+_target_: models.encoder.ijepa.IJEPAEncoder
+model_name: "facebook/ijepa_vith14_1k"
+cache_dir: "/homes/jpecchini/.cache/huggingface"

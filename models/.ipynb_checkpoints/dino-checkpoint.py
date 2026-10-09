@@ -4,9 +4,10 @@ import torch.nn as nn
 torch.hub._validate_not_a_forked_repo=lambda a,b,c: True
 
 class DinoV2Encoder(nn.Module):
-    def __init__(self, name, feature_key):
+    def __init__(self, name, feature_key,input_size=224):
         super().__init__()
         self.name = name
+        self.input_size = input_size
         self.base_model = torch.hub.load("facebookresearch/dinov2:b48308a", name)
         self.feature_key = feature_key
         self.emb_dim = self.base_model.num_features

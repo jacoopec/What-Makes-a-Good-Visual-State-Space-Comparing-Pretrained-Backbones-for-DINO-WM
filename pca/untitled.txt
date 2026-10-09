@@ -1,0 +1,12 @@
+python visualize_backbone_pca.py \
+    --encoder clip \
+    --video /path/to/rollout.mp4 \
+    --frame 25 \
+    --output ./pusht_clip.png
+    
+    
+    
+python pca_analysis.py \
+    --encoder mae \
+    --image ./a.bmp \
+    --output ./res.png

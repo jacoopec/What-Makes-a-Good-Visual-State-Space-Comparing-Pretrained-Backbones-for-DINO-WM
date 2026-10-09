@@ -1,44 +1,63 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-from transformers import ViTMAEConfig, ViTMAEModel
+from transformers import ViTMAEModel
 
 
 class MAEEncoder(nn.Module):
+
     def __init__(
         self,
         model_name="facebook/vit-mae-base",
-        cache_dir="/homes/jpecchini/.cache/huggingface",
         local_files_only=True,
     ):
         super().__init__()
 
-        config = ViTMAEConfig.from_pretrained(
-            model_name,
-            cache_dir=cache_dir,
-            local_files_only=local_files_only,
-        )
-
-        # Keep every patch
-        config.mask_ratio = 0.0
+        # -----------------------------------------------------
+        # Frozen pretrained MAE backbone
+        # -----------------------------------------------------
 
         self.base_model = ViTMAEModel.from_pretrained(
             model_name,
-            config=config,
-            cache_dir=cache_dir,
             local_files_only=local_files_only,
         )
 
-        self.name = model_name
-        self.emb_dim = config.hidden_size      # 768
-        self.patch_size = config.patch_size    # 16
+        # Keep all spatial patches
+        self.base_model.config.mask_ratio = 0.0
+
+        # Freeze MAE backbone
+        for p in self.base_model.parameters():
+            p.requires_grad = False
+
+        self.base_model.eval()
+
+        # -----------------------------------------------------
+        # Trainable projection:
+        # 768-D MAE token -> 384-D token
+        # -----------------------------------------------------
+
+        self.proj = nn.Linear(768, 384)
+
+        # -----------------------------------------------------
+        # Encoder metadata exposed to DINO-WM
+        # -----------------------------------------------------
+
+        # IMPORTANT:
+        # DINO-WM now sees 384-D output features.
+        self.emb_dim = 384
+
+        self.patch_size = 16
+        self.image_size = 224
+        self.num_patches = 14 * 14
         self.latent_ndim = 2
 
-        self.num_patches = (
-            config.image_size // config.patch_size
-        ) ** 2                                 # 196
+        self.name = "mae_vit_base_patch16_proj384"
 
-        # ImageNet normalization expected by pretrained MAE
+        # -----------------------------------------------------
+        # MAE normalization
+        # -----------------------------------------------------
+
         self.register_buffer(
             "image_mean",
             torch.tensor(
@@ -53,48 +72,98 @@ class MAEEncoder(nn.Module):
             ).view(1, 3, 1, 1),
         )
 
-        # Freeze MAE
-        for parameter in self.base_model.parameters():
-            parameter.requires_grad = False
+    def train(self, mode=True):
+        """
+        DINO-WM may call encoder.train() during training.
 
+        We want:
+            projection -> training mode
+            MAE backbone -> always eval mode
+        """
 
-    def forward(self, images):
+        super().train(mode)
 
-        # DINO-WM gives images approximately in [-1, 1]
-        # Convert back to [0, 1]
-        images = (images + 1.0) / 2.0
+        # MAE stays permanently in eval mode
+        self.base_model.eval()
 
-        # Apply normalization expected by MAE
-        images = (
-            images - self.image_mean.to(images.dtype)
-        ) / self.image_std.to(images.dtype)
+        return self
 
-        batch_size = images.shape[0]
+    def forward(self, x):
+        """
+        Input:
+            x: [B, 3, H, W], approximately in [-1, 1]
 
-        # IMPORTANT:
-        # mask_ratio=0 still invokes random_masking().
-        # Ordered noise keeps all patches in spatial order.
+        Output:
+            [B, 196, 384]
+        """
+
+        # -----------------------------------------------------
+        # Resize if necessary
+        # -----------------------------------------------------
+
+        if x.shape[-2:] != (224, 224):
+            x = F.interpolate(
+                x,
+                size=(224, 224),
+                mode="bicubic",
+                align_corners=False,
+            )
+
+        # -----------------------------------------------------
+        # DINO-WM [-1,1] -> RGB [0,1]
+        # -----------------------------------------------------
+
+        x = (x + 1.0) / 2.0
+
+        assert x.min() >= -1e-5
+        assert x.max() <= 1.0 + 1e-5
+
+        # -----------------------------------------------------
+        # MAE pretrained normalization
+        # -----------------------------------------------------
+
+        x = (x - self.image_mean) / self.image_std
+
+        B = x.shape[0]
+
+        # -----------------------------------------------------
+        # Keep all MAE patches in spatial order
+        # -----------------------------------------------------
+
         noise = torch.arange(
             self.num_patches,
-            device=images.device,
-            dtype=torch.float32,
+            device=x.device,
+            dtype=x.dtype,
         )
 
-        noise = noise.unsqueeze(0).expand(
-            batch_size, -1
-        )
+        noise = noise.unsqueeze(0).expand(B, -1)
+
+        # -----------------------------------------------------
+        # Frozen MAE forward
+        # -----------------------------------------------------
 
         outputs = self.base_model(
-            pixel_values=images,
+            pixel_values=x,
             noise=noise,
-            interpolate_pos_encoding=False,
+            return_dict=True,
         )
 
-        # [B, 197, 768]
         tokens = outputs.last_hidden_state
 
-        # Remove CLS:
-        # [B, 196, 768]
+        # CLS + 196 patches
+        assert tokens.shape[1:] == (197, 768)
+
+        # Remove CLS token
         patch_tokens = tokens[:, 1:, :]
+
+        assert patch_tokens.shape[1:] == (196, 768)
+
+        # -----------------------------------------------------
+        # Trainable projection
+        # -----------------------------------------------------
+
+        patch_tokens = self.proj(patch_tokens)
+
+        assert patch_tokens.shape[1:] == (196, 384)
 
         return patch_tokens

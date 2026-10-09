@@ -1,9 +1,9 @@
-_target_: models.mae.MAEEncoder
+_target_: models.encoder.mae.MAEEncoder
 # model_name: "/homes/jpecchini/pretrained_models/vit-mae-base"
-cache_dir: null
+# cache_dir: "/homes/jpecchini/.cache/huggingface"
 local_files_only: false
 # normalize_input: true
 
 
 # model_name: facebook/vit-mae-base
-# cache_dir: /homes/jpecchini/.cache/huggingface
+# cache_dir: null

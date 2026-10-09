@@ -1,0 +1,6 @@
+pearson_state: +0.653856 +/- 0.163143
+spearman_state: +0.660271 +/- 0.166150
+pearson_position: +0.821331 +/- 0.122792
+spearman_position: +0.791615 +/- 0.150400
+pearson_object: +0.899214 +/- 0.097605
+spearman_object: +0.786469 +/- 0.186791
