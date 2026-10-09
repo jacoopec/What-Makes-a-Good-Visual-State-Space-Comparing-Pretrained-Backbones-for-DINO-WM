@@ -1,0 +1,4 @@
+encoder,frame,reference_frame,experiment,grid_height,grid_width,feature_dimension,max_cosine_similarity,predicted_x,predicted_y,predicted_patch_row,predicted_patch_col,region_type,object_localization_hit,object_background_contrast,temporal_error_pixels
+dino,0,0,within_frame_reference,16,16,384,1.0,119.0,119.0,8,8,,,,
+mae,0,0,within_frame_reference,14,14,768,0.9999995827674866,120.0,120.0,7,7,,,,
+siglip,0,0,within_frame_reference,14,14,768,1.0,120.0,120.0,7,7,,,,
