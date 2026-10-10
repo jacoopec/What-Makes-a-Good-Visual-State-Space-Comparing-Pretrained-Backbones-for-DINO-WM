@@ -67,6 +67,73 @@ class GeometryTests(unittest.TestCase):
             analysis.load_encoder_config("resnet", [])
 
 
+class PushTMaskTests(unittest.TestCase):
+    def scene(self):
+        rgb = np.full((100, 120, 3), 255, dtype=np.uint8)
+        rgb[2:4, :] = [211, 211, 211]  # gray arena wall
+        rgb[20:60, 10:30] = [144, 238, 144]  # green target
+        rgb[75:85, 90:100] = [65, 105, 225]  # blue agent
+        mask = np.zeros((100, 120), dtype=bool)
+        mask[20:30, 50:90] = True
+        mask[30:60, 65:75] = True
+        rgb[mask] = [143, 162, 183]  # compressed lighter gray fill
+        return rgb, mask
+
+    def test_separates_object_from_target_agent_and_walls(self):
+        rgb, expected = self.scene()
+        mask, info = analysis.pusht_object_mask(rgb)
+        np.testing.assert_array_equal(mask, expected)
+        self.assertEqual(info["status"], "detected")
+        # Rotation and a moderate codec perturbation preserve segmentation.
+        noisy = rgb.astype(np.int16)
+        noisy[expected] += [4, -3, 2]
+        rotated, _ = analysis.pusht_object_mask(np.rot90(noisy.clip(0, 255).astype(np.uint8)).copy())
+        np.testing.assert_array_equal(rotated, np.rot90(expected))
+
+    def test_absent_and_ambiguous_object_do_not_create_false_ground_truth(self):
+        mask, info = analysis.pusht_object_mask(np.full((100, 120, 3), 255, dtype=np.uint8))
+        self.assertIsNone(mask)
+        self.assertEqual(info["status"], "not_detected")
+        rgb, _ = self.scene()
+        rgb[70:90, 10:40] = [119, 136, 153]
+        mask, info = analysis.pusht_object_mask(rgb)
+        self.assertIsNone(mask)
+        self.assertEqual(info["status"], "ambiguous")
+
+    def test_mask_metrics_hit_miss_contrast_and_temporal_summary(self):
+        scores = np.array([[1., -1.], [-1., -1.]], dtype=np.float32)
+        region = np.zeros((20, 20), dtype=bool)
+        region[:10, :10] = True
+        item = {"region": region, "region_type": "pusht_color_mask", "mask_status": "detected"}
+        hit = analysis.measure(scores, np.where(region, .8, .2), (20, 20), item)
+        miss = analysis.measure(np.flip(scores).copy(), np.where(region, .1, .5), (20, 20), item)
+        self.assertEqual(hit["object_localization_hit"], 1)
+        self.assertEqual(miss["object_localization_hit"], 0)
+        self.assertAlmostEqual(hit["object_background_contrast"], .6)
+        self.assertAlmostEqual(miss["object_background_contrast"], -.4)
+        rows = [dict(hit, encoder="test", experiment="within_frame_reference"),
+                dict(hit, encoder="test", experiment="fixed_reference_cross_frame"),
+                dict(miss, encoder="test", experiment="fixed_reference_cross_frame")]
+        summary = analysis.summarize_localization(rows)["test"]
+        self.assertEqual(summary["localization_accuracy"], .5)
+        self.assertEqual(summary["frames_with_localization"], 2)
+        self.assertIsNone(analysis.summarize_localization(rows[:1])["test"]["localization_accuracy"])
+
+    def test_mask_outputs_and_manual_precedence(self):
+        rgb, expected = self.scene()
+        args = SimpleNamespace(object_mask="pusht-color", source_type="images",
+                               mask_color_tolerance=32., frames=[0], reference=[70, 25])
+        with tempfile.TemporaryDirectory() as tmp:
+            annotations = {}
+            reports = analysis.prepare_object_masks(args, [rgb], annotations, Path(tmp))
+            np.testing.assert_array_equal(annotations[0]["region"], expected)
+            self.assertTrue((Path(tmp) / reports["0"]["mask_file"]).is_file())
+            self.assertTrue((Path(tmp) / "object_masks/frame_000000_overlay.png").is_file())
+            annotations[0]["region_type"] = "mask"
+            reports = analysis.prepare_object_masks(args, [rgb], annotations, Path(tmp))
+            self.assertEqual(reports["0"]["method"], "mask")
+
+
 class RecordingEncoder(torch.nn.Module):
     def __init__(self, kind):
         super().__init__()

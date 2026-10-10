@@ -1,0 +1,30 @@
+{
+  "0": {
+    "method": "pusht_color",
+    "rgb_tolerance": 32.0,
+    "status": "detected",
+    "object_pixels": 1381,
+    "mask_file": "object_masks/frame_000000.png"
+  },
+  "5": {
+    "method": "pusht_color",
+    "rgb_tolerance": 32.0,
+    "status": "detected",
+    "object_pixels": 1381,
+    "mask_file": "object_masks/frame_000005.png"
+  },
+  "10": {
+    "method": "pusht_color",
+    "rgb_tolerance": 32.0,
+    "status": "detected",
+    "object_pixels": 1386,
+    "mask_file": "object_masks/frame_000010.png"
+  },
+  "20": {
+    "method": "pusht_color",
+    "rgb_tolerance": 32.0,
+    "status": "detected",
+    "object_pixels": 1387,
+    "mask_file": "object_masks/frame_000020.png"
+  }
+}

@@ -121,10 +121,62 @@ uses random weights or falls back to a different backbone.
 
 ## Optional ground truth
 
+### Automatic PushT object masks
+
+The script now segments the **visible gray T**, excluding the green target, blue
+agent and light-gray arena walls. With `--source-type pusht` this is enabled by
+default (`--object-mask auto`). For PushT recordings supplied as images or video,
+add `--object-mask pusht-color`. Disable automatic segmentation with
+`--object-mask none`. Explicit JSON masks/boxes always take precedence.
+
+The detector uses the renderer's `LightSlateGray` RGB (119,136,153), its 1.2-times
+lighter fill, and channel ordering to distinguish gray-blue object pixels from
+green/blue/neutral regions. `--mask-color-tolerance 32` is the default Euclidean
+RGB tolerance for compression and antialiasing. It keeps the largest connected
+component, rejects tiny detections and ambiguous multiple large components, and
+does not fill holes across an occluding agent. This is color-derived pseudo ground
+truth for the default renderer, not a general T-shape recognizer or a perfect
+geometric mask: changed colors, severe compression and occlusions can affect it.
+Inspect the exported masks before using them for reported results.
+
+New outputs:
+
+* `object_masks/frame_*.png`: binary masks at original image resolution.
+* `object_masks/frame_*_overlay.png`: original image, binary mask and colored overlay.
+* `metadata.json` / `object_masks`: per-frame method, detection status, pixel count
+  and mask path. Missing/ambiguous automatic detections leave localization and
+  contrast blank, rather than treating an invalid mask as an incorrect localization.
+* CSV `object_localization_hit`: 1 if the maximum-similarity patch center lies
+  inside the T, 0 otherwise. `region_type=pusht_color_mask` identifies automatic masks.
+* CSV `mean_object_similarity`, `mean_background_similarity`, and
+  `object_background_contrast`: object mean minus background mean using the original
+  resolution, bilinearly upsampled cosine map. Background is the entire complement
+  of the visible object, including green target and agent.
+* `localization_summary.json`: accuracy (mean of hits), mean contrast and the
+  number of valid frames per backbone, **excluding the initial self-similarity
+  frame**. Accuracy is `null` if there are no valid temporal frames; always report
+  the valid-frame count alongside it.
+
+For example:
+
+```bash
+python spatial_correspondence.py \
+  --source-type video --source ../episode_000.mp4 \
+  --frames 0 5 10 20 --reference 161 102 \
+  --object-mask pusht-color --encoders dino mae --device cuda \
+  --output correspondence_results/temporal_with_masks
+```
+
+The script warns if the initial reference point is outside the object mask. No
+point correspondence or temporal point-error ground truth is inferred from color.
+
+### Manual annotations
+
 PushT's current dataset returns states and a shape name, but no rendered object
 segmentation or tracked surface points. The script does not mistake the target,
 agent, T-object center, or state coordinates for arbitrary point correspondences.
-Supply `--annotations annotations.json` to compute ground-truth metrics:
+Supply `--annotations annotations.json` to provide manual ground-truth metrics or
+override the automatically derived regions:
 
 ```json
 {
@@ -227,3 +279,11 @@ The smoke environment used PyTorch 2.12.0+cpu, Transformers 5.8.0 and Hydra 1.3.
 these are observations, not new project dependency pins. CLIP/I-JEPA pretrained
 passes, actual PushT dataset loading, CUDA and SLURM execution were not tested
 locally because the matching weights/package, rollout data or GPU were unavailable.
+
+On 2026-10-10, the automatic-mask extension passed all 13 offline tests, including
+color separation, rotation/compression perturbations, missing/ambiguous detections,
+manual annotation precedence, localization hits/misses and temporal aggregation.
+Masks were also generated for the existing RGB frames 0, 5, 10 and 20; inspection
+of the first/last overlays confirmed separation of the gray T from target, agent
+and walls. These segmentation-only artifacts are in
+`correspondence_results/object_mask_validation/`; this check did not rerun encoders.

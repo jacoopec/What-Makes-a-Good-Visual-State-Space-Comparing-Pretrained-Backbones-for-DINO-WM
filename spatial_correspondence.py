@@ -13,6 +13,7 @@ import importlib.metadata
 import json
 from pathlib import Path
 import re
+import warnings
 
 import matplotlib
 matplotlib.use("Agg")
@@ -260,13 +261,107 @@ def load_annotations(path, frames, images):
     return result, data
 
 
+def pusht_object_mask(rgb, tolerance=32.0):
+    """Visible LightSlateGray block, including its lighter fill, not green goal.
+
+    Color-derived masks are pseudo ground truth for the default PushT renderer.
+    No geometric hole filling: the agent/goal must not become object pixels.
+    """
+    import cv2
+    pixels = rgb.astype(np.float32)
+    base = np.array([119., 136., 153.], dtype=np.float32)
+    direction = base * 0.2  # env/pusht/pusht_env.py: light_color = 1.2 * color
+    fraction = np.clip(((pixels - base) * direction).sum(-1) / (direction @ direction), 0, 1)
+    distance = np.linalg.norm(pixels - (base + fraction[..., None] * direction), axis=-1)
+    r, g, b = pixels.transpose(2, 0, 1)
+    candidate = (distance <= tolerance) & (b - r >= 10) & (g - r >= 3) & (b - g >= 3)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(candidate.astype(np.uint8), connectivity=8)
+    minimum = max(4, int(np.ceil(rgb.shape[0] * rgb.shape[1] * 0.0005)))
+    components = sorted((i for i in range(1, count) if stats[i, cv2.CC_STAT_AREA] >= minimum),
+                        key=lambda i: stats[i, cv2.CC_STAT_AREA], reverse=True)
+    info = {"method": "pusht_color", "rgb_tolerance": tolerance,
+            "status": "not_detected", "object_pixels": 0}
+    if not components:
+        return None, info
+    largest = components[0]
+    area = int(stats[largest, cv2.CC_STAT_AREA])
+    if area > rgb.shape[0] * rgb.shape[1] * 0.3 or (
+            len(components) > 1 and stats[components[1], cv2.CC_STAT_AREA] > area * 0.25):
+        info["status"] = "ambiguous"
+        return None, info
+    info.update(status="detected", object_pixels=area)
+    return labels == largest, info
+
+
+def prepare_object_masks(args, images, annotations, output):
+    """Manual regions take precedence; failed auto masks leave metrics unavailable."""
+    automatic = args.object_mask == "pusht-color" or (args.object_mask == "auto" and args.source_type == "pusht")
+    reports = {}
+    folder = output / "object_masks"
+    for frame, rgb in zip(args.frames, images):
+        item = annotations.setdefault(frame, {})
+        report = {"method": "none", "status": "unavailable"}
+        if "region" in item:
+            report = {"method": item["region_type"], "status": "provided",
+                      "object_pixels": int(item["region"].sum())}
+        elif automatic:
+            mask, report = pusht_object_mask(rgb, args.mask_color_tolerance)
+            if mask is not None:
+                item.update(region=mask, region_type="pusht_color_mask")
+            else:
+                warnings.warn("PushT object mask {} for frame {}; localization/contrast left empty".format(report["status"], frame))
+        item["mask_status"] = report["status"]
+        if "region" in item:
+            folder.mkdir(exist_ok=True)
+            mask = item["region"]
+            stem = "frame_{:06d}".format(frame)
+            Image.fromarray(mask.astype(np.uint8) * 255).save(folder / (stem + ".png"))
+            fig, axes = plt.subplots(1, 3, figsize=(10, 3.5), constrained_layout=True)
+            for ax in axes:
+                show_rgb(ax, rgb)
+            axes[0].set_title("Original RGB")
+            axes[1].imshow(mask, cmap="gray", vmin=0, vmax=1,
+                           extent=(0, rgb.shape[1], rgb.shape[0], 0))
+            axes[1].set_title("Object mask")
+            tint = np.zeros((*mask.shape, 4), dtype=np.float32)
+            tint[mask] = [1., 0., 1., .55]
+            axes[2].imshow(tint, extent=(0, rgb.shape[1], rgb.shape[0], 0))
+            axes[2].set_title("Detected object overlay")
+            fig.suptitle("Frame {} | {}".format(frame, report["method"]))
+            fig.savefig(folder / (stem + "_overlay.png"), dpi=160, bbox_inches="tight")
+            plt.close(fig)
+            report["mask_file"] = "object_masks/" + stem + ".png"
+        reports[str(frame)] = report
+    first = annotations[args.frames[0]].get("region")
+    if first is not None:
+        x, y = args.reference
+        if not first[int(y), int(x)]:
+            warnings.warn("The requested reference point is outside the object mask in the first frame")
+    return reports
+
+
+def summarize_localization(rows):
+    """Aggregate only cross-frame rows; do not inflate accuracy with self-matches."""
+    summary = {}
+    for label in dict.fromkeys(row["encoder"] for row in rows):
+        temporal = [row for row in rows if row["encoder"] == label and row["experiment"] == "fixed_reference_cross_frame"]
+        hits = [row["object_localization_hit"] for row in temporal if row["object_localization_hit"] != ""]
+        contrasts = [row["object_background_contrast"] for row in temporal if row["object_background_contrast"] != ""]
+        summary[label] = {"temporal_frames": len(temporal), "frames_with_localization": len(hits),
+                          "localization_accuracy": float(np.mean(hits)) if hits else None,
+                          "frames_with_contrast": len(contrasts),
+                          "mean_object_background_contrast": float(np.mean(contrasts)) if contrasts else None}
+    return summary
+
+
 def measure(scores, pixel_map, image_hw, annotation):
     row, col = np.unravel_index(np.argmax(scores), scores.shape)
     x, y = patch_center(row, col, image_hw, scores.shape)
     result = {"max_cosine_similarity": float(scores[row, col]),
               "predicted_x": x, "predicted_y": y,
               "predicted_patch_row": int(row), "predicted_patch_col": int(col),
-              "region_type": "", "object_localization_hit": "",
+              "region_type": "", "mask_status": annotation.get("mask_status", "unavailable"),
+              "object_localization_hit": "", "mean_object_similarity": "", "mean_background_similarity": "",
               "object_background_contrast": "", "temporal_error_pixels": ""}
     region = annotation.get("region")
     if region is not None:
@@ -277,7 +372,9 @@ def measure(scores, pixel_map, image_hw, annotation):
         else:
             result["object_localization_hit"] = int(region[int(y), int(x)])
         if region.any() and (~region).any():
-            result["object_background_contrast"] = float(pixel_map[region].mean() - pixel_map[~region].mean())
+            result["mean_object_similarity"] = float(pixel_map[region].mean())
+            result["mean_background_similarity"] = float(pixel_map[~region].mean())
+            result["object_background_contrast"] = result["mean_object_similarity"] - result["mean_background_similarity"]
     if "correspondence_xy" in annotation:
         result["temporal_error_pixels"] = float(np.linalg.norm(np.array([x, y]) - annotation["correspondence_xy"]))
     return result
@@ -374,6 +471,7 @@ def run(args):
     (output / "observations").mkdir()
     for frame, rgb in zip(args.frames, images):
         Image.fromarray(rgb).save(output / "observations" / "frame_{:06d}.png".format(frame))
+    mask_reports = prepare_object_masks(args, images, annotations, output)
     device = torch.device(args.device)
     if device.type not in ("cuda", "cpu"):
         raise ValueError("Device must be CPU or CUDA")
@@ -390,7 +488,7 @@ def run(args):
         "coordinate_convention": "original image edge coordinates; pixel centers at (x+0.5,y+0.5)",
         "contrast_definition": "mean bilinearly upsampled similarity in object region minus complement",
         "temporal_error_definition": "patch-center distance to annotated physical reference point; includes patch quantization",
-        "annotations": annotation_data, "encoders": [],
+        "annotations": annotation_data, "object_masks": mask_reports, "encoders": [],
         "warnings": ["Raw cosine magnitudes are not comparable quality scores across architectures.",
                      "A transformer patch has global context; its grid cell is not its full receptive field.",
                      "No object center is used as point ground truth; region complement includes agent and target."],
@@ -464,6 +562,7 @@ def run(args):
             writer.writeheader()
             writer.writerows(rows)
     save_summary(images, labels, all_maps, rows, reference_bounds, args, output)
+    (output / "localization_summary.json").write_text(json.dumps(summarize_localization(rows), indent=2), encoding="utf-8")
     metadata["status"] = "complete"
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     print("Saved analysis to {}".format(output), flush=True)
@@ -481,11 +580,17 @@ def parse_args(argv=None):
     parser.add_argument("--output", required=True)
     parser.add_argument("--device", default="cpu", help="cpu, cuda, or cuda:N")
     parser.add_argument("--annotations", help="Optional JSON: object masks/boxes and tracked reference points")
+    parser.add_argument("--object-mask", choices=("auto", "none", "pusht-color"), default="auto",
+                        help="auto: segment default-color PushT dataset; pusht-color: also segment image/video inputs; manual annotations take precedence")
+    parser.add_argument("--mask-color-tolerance", type=float, default=32.0,
+                        help="RGB Euclidean tolerance around PushT gray outline/fill colors (default 32)")
     parser.add_argument("--vmin", type=float, default=-1.0)
     parser.add_argument("--vmax", type=float, default=1.0)
     parser.add_argument("--alpha", type=float, default=0.55)
     parser.add_argument("--cuda-memory-fraction", type=float, help="Optional PyTorch allocator cap (0,1]; not total process VRAM")
     args = parser.parse_args(argv)
+    if not np.isfinite(args.mask_color_tolerance) or not 0 < args.mask_color_tolerance <= 100:
+        parser.error("Mask color tolerance must be in (0,100]")
     if args.trajectory < 0 or args.frames[0] < 0 or args.frames != sorted(set(args.frames)):
         parser.error("Trajectory must be nonnegative and frames strictly increasing, nonnegative")
     if not (-1 <= args.vmin < args.vmax <= 1) or not 0 <= args.alpha <= 1:
